@@ -1,0 +1,257 @@
+name: Monitor Qt VS Tools Releases
+
+on:
+  schedule:
+    # Run on the 1st of every month at 9:00 AM UTC
+    - cron: '0 9 1 * *'
+  workflow_dispatch: # Allow manual triggering
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check-qt-vstools:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Check Qt VS Tools version on Visual Studio Marketplace
+        id: check_version
+        run: |
+          echo "Checking Qt VS Tools version on Visual Studio Marketplace..."
+          
+          # Fetch the marketplace page
+          MARKETPLACE_URL="https://marketplace.visualstudio.com/items?itemName=TheQtCompany.QtVisualStudioTools2022"
+          RESPONSE=$(curl -s "$MARKETPLACE_URL")
+          
+          # Extract version from the page (looking for version pattern)
+          # The marketplace page contains version info in meta tags and page content
+          VERSION=$(echo "$RESPONSE" | grep -oP 'Version \K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          
+          if [ -z "$VERSION" ]; then
+            echo "Could not extract version from marketplace page"
+            echo "version=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Found Qt VS Tools version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Extract major.minor version for comparison
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          
+          # Check if version is 3.4 or higher
+          if [ "$MAJOR" -eq 3 ] && [ "$MINOR" -ge 4 ]; then
+            echo "is_new_version=true" >> $GITHUB_OUTPUT
+            echo "✅ New version detected: $VERSION (>= 3.4)"
+          elif [ "$MAJOR" -gt 3 ]; then
+            echo "is_new_version=true" >> $GITHUB_OUTPUT
+            echo "✅ New major version detected: $VERSION (>= 3.4)"
+          else
+            echo "is_new_version=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ Current version $VERSION is below 3.4"
+          fi
+      
+      - name: Check GitHub releases for additional information
+        id: check_github
+        run: |
+          echo "Checking Qt VS Tools GitHub releases..."
+          
+          # Get latest release from GitHub
+          GITHUB_API="https://api.github.com/repos/qt-labs/vstools/releases/latest"
+          RELEASE_INFO=$(curl -s "$GITHUB_API")
+          
+          GITHUB_VERSION=$(echo "$RELEASE_INFO" | grep -oP '"tag_name":\s*"v?\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          RELEASE_URL=$(echo "$RELEASE_INFO" | grep -oP '"html_url":\s*"\K[^"]+' | head -1)
+          RELEASE_NOTES=$(echo "$RELEASE_INFO" | grep -oP '"body":\s*"\K[^"]+' | head -1 | sed 's/\\n/\n/g' | head -c 500)
+          
+          echo "github_version=$GITHUB_VERSION" >> $GITHUB_OUTPUT
+          echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
+          
+          # Save release notes to a file for later use
+          echo "$RELEASE_NOTES" > /tmp/release_notes.txt
+          
+          if [ -n "$GITHUB_VERSION" ]; then
+            echo "Found GitHub release: $GITHUB_VERSION"
+          else
+            echo "No release information found on GitHub"
+          fi
+      
+      - name: Check for MSB4044 fix in changelog
+        id: check_fix
+        run: |
+          echo "Checking for MSB4044 bug fix mentions..."
+          
+          # Check if changelog mentions the bug fix
+          CHANGELOG_URL="https://raw.githubusercontent.com/qt-labs/vstools/dev/Changelog"
+          CHANGELOG=$(curl -s "$CHANGELOG_URL")
+          
+          # Look for MSB4044, ReadLinesFromFile, or issue #44 mentions
+          if echo "$CHANGELOG" | grep -iE "(MSB4044|ReadLinesFromFile|issue.*44)" | head -5 > /tmp/fix_mentions.txt; then
+            echo "fix_mentioned=true" >> $GITHUB_OUTPUT
+            echo "✅ Bug fix mentioned in changelog"
+          else
+            echo "fix_mentioned=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No explicit mention of MSB4044 fix found"
+          fi
+      
+      - name: Create issue if new version detected
+        if: steps.check_version.outputs.is_new_version == 'true'
+        uses: actions/github-script@v7
+        env:
+          MARKETPLACE_VERSION: ${{ steps.check_version.outputs.version }}
+          GITHUB_VERSION: ${{ steps.check_github.outputs.github_version }}
+          RELEASE_URL: ${{ steps.check_github.outputs.release_url }}
+          FIX_MENTIONED: ${{ steps.check_fix.outputs.fix_mentioned }}
+        with:
+          script: |
+            const marketplaceVersion = process.env.MARKETPLACE_VERSION;
+            const githubVersion = process.env.GITHUB_VERSION || 'Not available';
+            const releaseUrl = process.env.RELEASE_URL || 'https://github.com/qt-labs/vstools/releases';
+            const fixMentioned = process.env.FIX_MENTIONED === 'true';
+            
+            // Read release notes if available
+            const fs = require('fs');
+            let releaseNotes = '';
+            try {
+              releaseNotes = fs.readFileSync('/tmp/release_notes.txt', 'utf8');
+            } catch (e) {
+              releaseNotes = 'Release notes not available';
+            }
+            
+            // Read fix mentions if available
+            let fixMentions = '';
+            try {
+              fixMentions = fs.readFileSync('/tmp/fix_mentions.txt', 'utf8');
+            } catch (e) {
+              fixMentions = 'No specific mentions found';
+            }
+            
+            const issueTitle = `🔔 Qt VS Tools ${marketplaceVersion} Released - Review for MSB4044 Fix`;
+            
+            const issueBody = `
+            # Qt VS Tools New Version Detected
+            
+            **Automated check on:** ${new Date().toISOString().split('T')[0]}
+            
+            ## Version Information
+            
+            - **Visual Studio Marketplace:** ${marketplaceVersion}
+            - **GitHub Release:** ${githubVersion}
+            - **Release URL:** ${releaseUrl}
+            
+            ## MSB4044 Bug Fix Status
+            
+            ${fixMentioned ? '✅ **Bug fix mentioned in changelog**' : '⚠️ **No explicit mention of MSB4044 fix in changelog**'}
+            
+            ${fixMentions ? `\n### Changelog Mentions:\n\`\`\`\n${fixMentions}\n\`\`\`\n` : ''}
+            
+            ## Release Notes Preview
+            
+            \`\`\`
+            ${releaseNotes.substring(0, 500)}${releaseNotes.length > 500 ? '...' : ''}
+            \`\`\`
+            
+            ## Action Required
+            
+            According to the [Visual Studio Upgrade Analysis](VISUAL_STUDIO_UPGRADE_ANALYSIS.md), Qt VS Tools 3.4+ should contain the fix for the critical MSB4044 bug that prevents DeepSkyStacker from building.
+            
+            ### Testing Protocol (from UPGRADE_PATH_PLAN.md)
+            
+            1. **Create isolated test environment** (VM or separate machine)
+            2. **Install Visual Studio 2022** (latest)
+            3. **Install all Qt versions:**
+               - Qt 6.4.0 (msvc2019_64)
+               - Qt 6.5.1 (msvc2019_64)
+               - Qt 6.6.1 (msvc2019_64)
+               - Qt 6.8.0 (msvc2022_64)
+               - Qt 6.10.0 (msvc2022_64)
+            4. **Install Qt VS Tools ${marketplaceVersion}**
+            5. **Clone DSS repository** and checkout main/development branch
+            6. **Test build** with each Qt version configuration
+            7. **Verify:**
+               - ✅ All projects build without MSB4044 errors
+               - ✅ Qt Designer opens .ui files correctly
+               - ✅ Can switch between Qt versions
+               - ✅ MOC generation works properly
+            
+            ### Links
+            
+            - [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=TheQtCompany.QtVisualStudioTools2022)
+            - [GitHub Release Page](${releaseUrl})
+            - [Changelog](https://github.com/qt-labs/vstools/blob/dev/Changelog)
+            - [Original Bug Report (Issue #44)](https://github.com/qt-labs/vstools/issues/44)
+            
+            ### Related Documentation
+            
+            - [BLOCKING_FACTORS.md](BLOCKING_FACTORS.md) - Details on the MSB4044 bug
+            - [UPGRADE_PATH_PLAN.md](UPGRADE_PATH_PLAN.md) - Testing protocol and upgrade steps
+            - [VISUAL_STUDIO_UPGRADE_ANALYSIS.md](VISUAL_STUDIO_UPGRADE_ANALYSIS.md) - Complete analysis
+            
+            ---
+            
+            *This issue was automatically created by the Qt VS Tools monitoring workflow.*
+            *Workflow file: \`.github/workflows/monitor-qt-vstools.yml\`*
+            `;
+            
+            // Check if an issue already exists for this version
+            const existingIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              labels: 'qt-vstools-release',
+              per_page: 100
+            });
+            
+            const versionExists = existingIssues.data.some(issue => 
+              issue.title.includes(marketplaceVersion)
+            );
+            
+            if (versionExists) {
+              console.log(`Issue already exists for version ${marketplaceVersion}`);
+              return;
+            }
+            
+            // Create new issue
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: issueTitle,
+              body: issueBody,
+              labels: ['qt-vstools-release', 'monitoring', 'action-required']
+            });
+            
+            console.log(`Created issue #${issue.data.number}: ${issueTitle}`);
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Qt VS Tools Monitoring Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Check Date:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check_version.outputs.is_new_version }}" == "true" ]; then
+            echo "✅ **New Version Detected:** ${{ steps.check_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "An issue has been created to track testing and evaluation." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "ℹ️ **Current Version:** ${{ steps.check_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Version 3.4+ not yet released. Will check again on the 1st of next month." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Monitoring Target:** Qt VS Tools >= 3.4 (contains MSB4044 fix)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Resources:**" >> $GITHUB_STEP_SUMMARY
+          echo "- [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=TheQtCompany.QtVisualStudioTools2022)" >> $GITHUB_STEP_SUMMARY
+          echo "- [GitHub Repository](https://github.com/qt-labs/vstools)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Upgrade Analysis Docs](VISUAL_STUDIO_UPGRADE_ANALYSIS.md)" >> $GITHUB_STEP_SUMMARY
