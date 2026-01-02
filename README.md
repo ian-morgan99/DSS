@@ -41,6 +41,8 @@ Qt 6.10.0 is needed to build DeepSkyStacker 6.1.1 and the current development (m
 
 In addition to you you will also need to install the Visual Studio Extension *Qt VS Tools* : (Extensions/Manage Extensions).
 
+**Note:** Qt VS Tools 3.4.1 or later is recommended, as version 3.4.1 includes the fix for the MSB4044 build error that affected earlier 3.3+ versions. The project now supports the latest stable Qt VS Tools versions.
+
 You will need to use *Extensions/Qt VS Tools/Qt Versions* to set up the named Qt Installation called:
 
 *6.10.0_msvc2022_64*
