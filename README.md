@@ -24,9 +24,9 @@ Building DeepSkyStacker:
 ------------------------
 
 To work on the current development codebase (for DeepSkyStacker 6.1.2) which uses a VS solution file called DeepSkyStacker.VS2022.sln,
-you will need to install Visual Studio 2026.   For earlier code versions either VS2019 or VS2022 will work.
+you will need to install Visual Studio 2022 version 17.12 or later.   For earlier code versions either VS2019 or VS2022 will work.
 
-If you open a DeepSkyStacker solution file for 6.1.1 or earlier releases, please **do not** accept VS2026's offer to upgrade the build
+If you open a DeepSkyStacker solution file for 6.1.1 or earlier releases, please **do not** accept Visual Studio's offer to upgrade the build
 environment the first time you open the solution file.
 
 In addition to Visual Studio, you will need to install Qt 6.10.0, Qt VS Tools and Visual Leak Detector (see below).
@@ -40,6 +40,8 @@ There are also instructions for setting up a macOS build system.
 Qt 6.10.0 is needed to build DeepSkyStacker 6.1.1 and the current development (master branch).
 
 In addition to you you will also need to install the Visual Studio Extension *Qt VS Tools* : (Extensions/Manage Extensions).
+
+**Note:** Qt VS Tools 3.4.1 or later is recommended, as version 3.4.1 includes the fix for the MSB4044 build error that affected earlier 3.3+ versions. The project now supports the latest stable Qt VS Tools versions.
 
 You will need to use *Extensions/Qt VS Tools/Qt Versions* to set up the named Qt Installation called:
 
